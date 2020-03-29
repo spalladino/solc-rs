@@ -1,13 +1,19 @@
 extern crate glob;
 extern crate serde;
 extern crate serde_json;
+extern crate simple_error;
 
 use glob::glob;
 use serde_json::{json, Value as JsonValue};
+use simple_error::bail;
+
 use std::collections::HashMap;
+use std::error::Error;
 use std::fs;
+use std::io;
 use std::path::{Path, PathBuf};
-use std::time::Instant;
+
+type Result<T> = std::result::Result<T, Box<dyn Error>>;
 
 #[derive(serde::Serialize)]
 struct SolidityFile {
@@ -31,8 +37,11 @@ struct SolidityArtifact {
 
 #[derive(serde::Deserialize, serde::Serialize, Debug)]
 struct SolcOutput {
+    #[serde(default)]
     contracts: HashMap<String, HashMap<String, SolcContract>>,
+    #[serde(default)]
     sources: HashMap<String, SolcSource>,
+    #[serde(default)]
     errors: Vec<SolcError>,
 }
 
@@ -162,30 +171,60 @@ fn build_solc_input_json(
     })
 }
 
-pub fn main() {
-    // Profiling
-    let now = Instant::now();
+fn get_content_from_path(path: &str) -> std::result::Result<String, String> {
+    let path: PathBuf = ["node_modules", path].iter().collect();
+    fs::read_to_string(&path)
+        .map_err(|err: io::Error| format!("Error opening file {}: {}", path.display(), err))
+}
 
+fn run() -> Result<()> {
     // Create list of solidity sources with content
-    let sources: HashMap<String, SolidityFile> = get_solidity_sources();
+    let mut sources: HashMap<String, SolidityFile> = get_solidity_sources();
 
     // Create standard-json input for solc
-    let evm_version = "byzantium";
+    let evm_version = "constantinople";
     let input = build_solc_input_json(&sources, &evm_version);
 
     // Compile & parse output
-    let raw_output = solc::compile(&input.to_string());
-    let output: SolcOutput = serde_json::from_str(&raw_output).unwrap();
+    let raw_output = solc::compile_with_callback(
+        &input.to_string(),
+        |kind: &str, path: &str| -> std::result::Result<String, String> {
+            if kind != "source" {
+                Err(format!("Unexpected kind {} (expected 'source')", kind))
+            } else if let Some(file) = sources.get(path) {
+                Ok(file.content.clone())
+            } else {
+                let content: String = get_content_from_path(path)?;
+                sources.insert(path.to_string(), SolidityFile { content: content.clone() });
+                Ok(content)
+            }
+        },
+    );
+    let output: SolcOutput = serde_json::from_str(&raw_output)?;
 
-    // Build & write artifacts
+    // Log errors and exit early if needed
+    let mut has_errors = false;
+    for err in &output.errors {
+        eprintln!("{}", err.formatted_message);
+        if err.severity == "error" {
+            has_errors = true;
+        }
+    }
+
+    if has_errors {
+        bail!("Compilation failed");
+    }
+
+    // Create & write artifacts
     let artifacts: Vec<SolidityArtifact> = build_contract_schemas(&output, &sources);
     let output_path = Path::new("./build/contracts/");
-    fs::create_dir_all(output_path).expect("Error creating output dir");
+    fs::create_dir_all(output_path)?;
     write_contract_schemas(&artifacts, &output_path);
+    eprintln!("Compiled {} artifacts", artifacts.len());
 
-    println!(
-        "Compiled {} artifacts in {} seconds",
-        artifacts.len(),
-        now.elapsed().as_secs_f32()
-    );
+    Ok(())
+}
+
+pub fn main() -> Result<()> {
+    run()
 }

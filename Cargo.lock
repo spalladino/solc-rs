@@ -309,12 +309,18 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "7fdf1b9db47230893d76faad238fd6097fd6d6a9245cd7a4d90dbd639536bbd2"
 
 [[package]]
+name = "simple-error"
+version = "0.2.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "339844c9af2d844b9230bb28e8f819a7790cbf20a29b5cbd2b59916a03a1ef51"
+
+[[package]]
 name = "solc"
 version = "0.1.0"
-source = "git+https://github.com/axic/solc-rust#4171d70a5d904339e123d28afa637c2df873f14b"
 dependencies = [
  "bindgen",
  "cmake",
+ "lazy_static",
 ]
 
 [[package]]
@@ -324,6 +330,7 @@ dependencies = [
  "glob",
  "serde",
  "serde_json",
+ "simple-error",
  "solc",
 ]
 
